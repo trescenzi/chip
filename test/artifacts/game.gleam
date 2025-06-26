@@ -1,8 +1,7 @@
 import chip
 import gleam/erlang/process
-import gleam/function
 import gleam/otp/actor
-import gleam/otp/supervisor
+import gleam/otp/supervision as supervisor
 
 type SessionRegistry =
   chip.Registry(Message, Int)
@@ -27,17 +26,20 @@ pub type Session {
 }
 
 pub fn start(action) {
-  actor.start(action, loop)
+  actor.new(action)
+  |> actor.on_message(loop)
+  |> actor.start
 }
 
-pub fn start_with(registry: SessionRegistry, id: Int, action: Action) {
-  let init = fn() { init(registry, id, action) }
-  actor.start_spec(actor.Spec(init: init, init_timeout: 10, loop: loop))
+pub fn start_with(id: Int, registry: SessionRegistry, action: Action) {
+  let init = fn(self) { init(self, registry, id, action) }
+  actor.new_with_initialiser(10, init)
+  |> actor.on_message(loop)
+  |> actor.start
 }
 
-pub fn childspec(registry: SessionRegistry, action) {
-  supervisor.worker(fn(id) { start_with(registry, id, action) })
-  |> supervisor.returning(fn(id, _self) { id + 1 })
+pub fn childspec(id: Int, registry: SessionRegistry, action) {
+  supervisor.worker(fn() { start_with(id, registry, action) })
 }
 
 pub fn next(game: Game) -> Nil {
@@ -45,34 +47,34 @@ pub fn next(game: Game) -> Nil {
 }
 
 pub fn current(game: Game) -> String {
-  actor.call(game, Current(_), 100)
+  actor.call(game, 100, Current)
 }
 
 pub fn stop(game: Game) -> Nil {
   actor.send(game, Stop)
 }
 
-fn init(registry, id, action) {
-  // Create a reference to self
-  let self = process.new_subject()
-
+fn init(self, registry, id, action) {
   // Register the counter under an id on initialization
   chip.register(registry, id, self)
 
   // The registry may send messages through the self subject to this actor
   // adding self to this actor selector will allow us to handle those messages.
-  actor.Ready(
-    action,
+  let selector =
     process.new_selector()
-      |> process.selecting(self, function.identity),
-  )
+    |> process.select(self)
+
+  actor.initialised(action)
+  |> actor.selecting(selector)
+  |> actor.returning(self)
+  |> Ok
 }
 
-fn loop(message, action) {
+fn loop(action, message) {
   case message {
     Next -> next_state(action)
     Current(client) -> send_unicode(client, action)
-    Stop -> actor.Stop(process.Normal)
+    Stop -> actor.stop()
   }
 }
 

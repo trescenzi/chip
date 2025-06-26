@@ -16,7 +16,7 @@ defmodule Chip.Benchmark do
       },
       inputs: inputs,
       before_scenario: fn quantity ->
-        {:ok, registry} = @chip.start(:unnamed)
+        {:ok, {:started, _pid, registry}} = @chip.start(:unnamed)
         initialize_registry(registry, quantity)
         registry
       end,
@@ -54,7 +54,7 @@ defmodule Chip.Benchmark do
   end
 
   defp subject_info(subject) do
-    pid = @process.subject_owner(subject)
+    {:ok, pid} = @process.subject_owner(subject)
 
     [{:monitors, monitors}, {:memory, memory}, {:message_queue_len, length}] =
       :erlang.process_info(pid, [
@@ -79,7 +79,7 @@ defmodule Chip.Benchmark.Memory do
     size = unit_measurement()
     IO.puts("   Unit of measurement: #{size}")
 
-    {:ok, registry} = @chip.start(:unnamed)
+    {:ok, {:started, _pid, registry}} = @chip.start(:unnamed)
 
     IO.puts("\n--- Rough memory measurements ---\n")
 
@@ -120,7 +120,7 @@ defmodule Chip.Benchmark.Memory do
   end
 
   defp subject_info(subject) do
-    pid = @process.subject_owner(subject)
+    {:ok, pid} = @process.subject_owner(subject)
     process_info(pid)
   end
 

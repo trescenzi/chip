@@ -1,7 +1,7 @@
 import chip
 import gleam/erlang/process
 import gleam/list
-import gleam/otp/supervisor
+import gleam/otp/supervision
 
 pub type PubSub(message, channel) =
   chip.Registry(message, channel)
@@ -11,8 +11,7 @@ pub fn start() {
 }
 
 pub fn childspec() {
-  supervisor.worker(fn(_param) { start() })
-  |> supervisor.returning(fn(_param, pubsub) { pubsub })
+  supervision.worker(fn() { start() })
 }
 
 pub fn subscribe(

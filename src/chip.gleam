@@ -3,10 +3,9 @@
 //// automatically delist dead processes.
 
 import gleam/dynamic
-import gleam/erlang
 import gleam/erlang/atom
 import gleam/erlang/process.{type Pid, type Subject}
-import gleam/function
+import gleam/erlang/reference.{type Reference}
 import gleam/otp/actor
 import gleam/result.{try}
 import lamb.{Bag, Private, Protected, Public, Set}
@@ -47,9 +46,12 @@ pub type Named {
 /// ```gleam
 /// > let _ = chip.start(chip.Named("sessions"))
 /// ```
-pub fn start(named: Named) -> Result(Registry(msg, group), actor.StartError) {
-  let init = fn() { init(named) }
-  actor.start_spec(actor.Spec(init: init, init_timeout: 100, loop: loop))
+pub fn start(named: Named)
+   -> Result(actor.Started(Subject(Message(a, b))), actor.StartError) {
+  let init = fn(self) { init(self, named) }
+  actor.new_with_initialiser(100, init)
+  |> actor.on_message(loop)
+  |> actor.start()
 }
 
 /// Retrieves a previously named registry.
@@ -139,7 +141,7 @@ pub fn members(
   group: group,
   timeout: Int,
 ) -> List(Subject(msg)) {
-  let group_store = process.call(registry, GroupStore2(_), timeout)
+  let group_store = process.call(registry, timeout, GroupStore2)
 
   lamb.lookup(group_store, group)
 }
@@ -159,7 +161,7 @@ pub fn stop(registry: Registry(msg, group)) -> Nil {
 // Server Code ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
 type Monitor =
-  erlang.Reference
+  Reference
 
 /// Chip's internal message type.
 pub opaque type Message(msg, group) {
@@ -185,10 +187,8 @@ type ProcessDown {
   ProcessDown(monitor: Monitor, pid: Pid)
 }
 
-fn init(
-  named: Named,
-) -> actor.InitResult(State(msg, group), Message(msg, group)) {
-  let self = process.new_subject()
+fn init(self, named: Named) {
+  //let self = process.new_subject()
 
   let table = initialize_named_registries_store()
 
@@ -206,16 +206,19 @@ fn init(
 
   let selector =
     process.new_selector()
-    |> process.selecting(self, function.identity)
-    |> process.selecting_anything(process_down)
+    |> process.select(self)
+    |> process.select_other(process_down)
 
-  actor.Ready(state, selector)
+  actor.initialised(state)
+  |> actor.selecting(selector)
+  |> actor.returning(self)
+  |> Ok
 }
 
 fn loop(
-  message: Message(msg, group),
   state: State(msg, group),
-) -> actor.Next(Message(msg, group), State(msg, group)) {
+  message: Message(msg, group),
+) -> actor.Next(State(msg, group), Message(msg, group)) {
   case message {
     GroupStore2(client) -> {
       // priority is given through selective receive
@@ -228,9 +231,15 @@ fn loop(
     Register(subject, group) -> {
       let pid = process.subject_owner(subject)
 
-      let Nil = monitor(state.monitors, pid)
-      lamb.insert(state.monitors, pid, Nil)
-      lamb.insert(state.groups, group, subject)
+      case pid {
+        Ok(pid) -> {
+          let Nil = monitor(state.monitors, pid)
+          lamb.insert(state.monitors, pid, Nil)
+          lamb.insert(state.groups, group, subject)
+        }
+        Error(_) -> Nil
+        //TODO what do we want to do in this case?
+      }
 
       state
       |> actor.continue()
@@ -256,7 +265,7 @@ fn loop(
     }
 
     Stop -> {
-      actor.Stop(process.Normal)
+      actor.stop()
     }
   }
 }
@@ -311,7 +320,7 @@ fn monitor(monitors: lamb.Table(Pid, Nil), pid: Pid) -> Nil {
   case lamb.any(monitors, pid) {
     True -> Nil
     False -> {
-      let _monitor = process.monitor_process(pid)
+      let _monitor = process.monitor(pid)
       Nil
     }
   }
@@ -321,7 +330,7 @@ fn monitor(monitors: lamb.Table(Pid, Nil), pid: Pid) -> Nil {
 fn decode_down_message(message: dynamic.Dynamic) -> Result(ProcessDown, Nil)
 
 fn schedulers() -> Int {
-  ffi_system_info(atom.create_from_string("schedulers"))
+  ffi_system_info(atom.create("schedulers"))
 }
 
 type Option =
@@ -331,7 +340,7 @@ type Option =
 fn ffi_system_info(option: Option) -> Int
 
 fn demonitor(reference: Monitor) -> Nil {
-  let _ = ffi_demonitor(reference, [atom.create_from_string("flush")])
+  let _ = ffi_demonitor(reference, [atom.create("flush")])
   Nil
 }
 

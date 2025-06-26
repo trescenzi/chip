@@ -14,10 +14,10 @@ pub fn main() {
   let assert Ok(session_b) = game.start(FireDice)
   let assert Ok(session_c) = game.start(PlayChip)
 
-  chip.register(registry, GroupA, session_a)
-  chip.register(registry, GroupB, session_b)
-  chip.register(registry, GroupA, session_c)
+  chip.register(registry.data, GroupA, session_a.data)
+  chip.register(registry.data, GroupB, session_b.data)
+  chip.register(registry.data, GroupA, session_c.data)
 
-  chip.members(registry, GroupA, 50)
+  chip.members(registry.data, GroupA, 50)
   |> list.each(fn(session) { game.next(session) })
 }

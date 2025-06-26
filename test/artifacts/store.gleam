@@ -1,7 +1,6 @@
 import chip
 import gleam/erlang/process
-import gleam/otp/actor
-import gleam/otp/supervisor
+import gleam/otp/supervision
 
 pub type Store(message) =
   chip.Registry(message, Int)
@@ -9,12 +8,12 @@ pub type Store(message) =
 pub type Id =
   Int
 
-pub fn start() -> Result(Store(message), actor.StartError) {
+pub fn start() {
   chip.start(chip.Unnamed)
 }
 
 pub fn childspec() {
-  supervisor.worker(fn(_index) { start() })
+  supervision.worker(start)
 }
 
 pub fn index(store: Store(message), id: Id, subject: process.Subject(message)) {

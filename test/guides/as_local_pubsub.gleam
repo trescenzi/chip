@@ -3,7 +3,6 @@ import chip
 import gleam/erlang/process
 import gleam/int
 import gleam/list
-import gleam/otp/task
 
 pub type Channel {
   General
@@ -17,27 +16,28 @@ pub type Event {
 
 pub fn main() {
   let assert Ok(pubsub) = pubsub.start()
+  let pubsub_subject = pubsub.data
 
   // For this scenario, out of simplicity, all clients are the current process.
   let client = process.new_subject()
 
   // Client is interested in coffee and pets.
-  chip.register(pubsub, Coffee, client)
-  chip.register(pubsub, Pets, client)
+  chip.register(pubsub_subject, Coffee, client)
+  chip.register(pubsub_subject, Pets, client)
 
   // Lets assume this is the server process broadcasting a welcome message.
-  task.async(fn() {
-    chip.members(pubsub, General, 50)
+  process.spawn(fn() {
+    chip.members(pubsub_subject, General, 50)
     |> list.each(fn(client) {
       Event(id: 1, message: "Welcome to General! Follow rules and be nice.")
       |> process.send(client, _)
     })
-    chip.members(pubsub, Coffee, 50)
+    chip.members(pubsub_subject, Coffee, 50)
     |> list.each(fn(client) {
       Event(id: 2, message: "Ice breaker! Favorite cup of coffee?")
       |> process.send(client, _)
     })
-    chip.members(pubsub, Pets, 50)
+    chip.members(pubsub_subject, Pets, 50)
     |> list.each(fn(client) {
       Event(id: 3, message: "Pets!")
       |> process.send(client, _)
@@ -57,7 +57,10 @@ pub fn main() {
     })
 }
 
-fn listen_for_messages(client, messages) -> List(String) {
+fn listen_for_messages(
+  client: process.Subject(Event),
+  messages: List(String),
+) -> List(String) {
   // This function will listen until messages stop arriving for 100 milliseconds.
 
   // A selector is useful to transform our Events into types a client expects,
@@ -65,14 +68,15 @@ fn listen_for_messages(client, messages) -> List(String) {
   // events into strings with the `to_string` function.
   let selector =
     process.new_selector()
-    |> process.selecting(client, to_string)
+    |> process.select_map(client, to_string)
 
-  case process.select(selector, 100) {
-    Ok(message) ->
+  case process.selector_receive(selector, 100) {
+    Ok(message) -> {
       // A message was received, capture it and attempt to listen for another message.
       message
       |> list.prepend(messages, _)
       |> listen_for_messages(client, _)
+    }
 
     Error(Nil) ->
       // A message was not received, stop listening and return captured messages in order.

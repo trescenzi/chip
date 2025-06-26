@@ -1,9 +1,6 @@
 import chip
 import gleam/erlang/process
-import gleam/function.{identity}
-import gleam/option
 import gleam/otp/actor
-import gleam/otp/supervisor
 
 pub opaque type Message {
   Inc
@@ -18,19 +15,10 @@ pub type Group {
 }
 
 pub fn start(registry: chip.Registry(Message, Group), group: Group, count: Int) {
-  let init = fn() { init(registry, group, count) }
-  actor.start_spec(actor.Spec(init: init, init_timeout: 10, loop: loop))
-}
-
-pub fn childspec(count) {
-  supervisor.worker(fn(param) {
-    let #(registry, group) = param
-    start(registry, group, count)
-  })
-  |> supervisor.returning(fn(param, _self) {
-    let #(registry, group) = param
-    #(registry, group, count)
-  })
+  let init = fn(self) { init(self, registry, group, count) }
+  actor.new_with_initialiser(10, init)
+  |> actor.on_message(loop)
+  |> actor.start()
 }
 
 pub fn stop(counter: process.Subject(Message)) -> Nil {
@@ -42,38 +30,39 @@ pub fn increment(counter: process.Subject(Message)) -> Nil {
 }
 
 pub fn current(counter: process.Subject(Message)) -> Int {
-  actor.call(counter, Current(_), 10)
+  actor.call(counter, 10, Current)
 }
 
-fn init(registry: chip.Registry(Message, Group), group: Group, count: Int) {
-  // Create a reference to self
-  let self = process.new_subject()
-
+fn init(self, registry: chip.Registry(Message, Group), group: Group, count: Int) {
   // Register the counter under an id on initialization
   chip.register(registry, group, self)
 
+  let selector =
+    process.new_selector()
+    |> process.select(self)
+
   // The registry may send messages through the self subject to this actor
   // adding self to this actor selector will allow us to handle those messages.
-  actor.Ready(
-    count,
-    process.new_selector()
-      |> process.selecting(self, identity),
-  )
+
+  actor.initialised(count) 
+  |> actor.selecting(selector)
+  |> actor.returning(self)
+  |> Ok
 }
 
-fn loop(message: Message, count: Int) {
+fn loop(count: Int, message: Message) {
   case message {
     Inc -> {
-      actor.Continue(count + 1, option.None)
+      actor.continue(count + 1)
     }
 
     Current(client) -> {
       process.send(client, count)
-      actor.Continue(count, option.None)
+      actor.continue(count)
     }
 
     Stop -> {
-      actor.Stop(process.Normal)
+      actor.stop()
     }
   }
 }

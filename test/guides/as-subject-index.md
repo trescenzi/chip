@@ -9,8 +9,7 @@ This pattern would be a way of re-defining chip as an indexed store:
 ```gleam
 import chip
 import gleam/erlang/process
-import gleam/otp/actor
-import gleam/otp/supervisor
+import gleam/otp/supervision
 
 pub type Store(message) =
   chip.Registry(message, Int)
@@ -18,12 +17,12 @@ pub type Store(message) =
 pub type Id =
   Int
 
-pub fn start() -> Result(Store(message), actor.StartError) {
+pub fn start() {
   chip.start(chip.Unnamed)
 }
 
 pub fn childspec() {
-  supervisor.worker(fn(_index) { start() })
+  supervision.worker(start)
 }
 
 pub fn index(store: Store(message), id: Id, subject: process.Subject(message)) {
@@ -53,11 +52,11 @@ pub fn main() {
   let assert Ok(session_2) = game.start(DrawCard)
   let assert Ok(session_3) = game.start(DrawCard)
 
-  store.index(sessions, 1, session_1)
-  store.index(sessions, 2, session_2)
-  store.index(sessions, 3, session_3)
+  store.index(sessions.data, 1, session_1.data)
+  store.index(sessions.data, 2, session_2.data)
+  store.index(sessions.data, 3, session_3.data)
 
-  router(sessions, "/resource/", 2)
+  router(sessions.data, "/resource/", 2)
 }
 
 fn router(sessions, url, id) {

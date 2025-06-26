@@ -2,7 +2,8 @@ import artifacts/game.{DrawCard, FireDice, PlayChip}
 import chip
 import gleam/erlang/process
 import gleam/list
-import gleam/otp/supervisor
+import gleam/otp/actor
+import gleam/otp/static_supervisor
 import gleam/result
 import gleeunit
 import gleeunit/should
@@ -20,8 +21,11 @@ pub fn cannot_retrieve_a_non_existing_registry_test() {
 
 pub fn can_retrieve_records_from_a_named_registry_test() {
   let assert Ok(registry) = chip.start(chip.Named("game-sessions"))
+  let subject = registry.data
 
-  let register = fn(session) { chip.register(registry, Nil, session) }
+  let register = fn(session: actor.Started(process.Subject(game.Message))) {
+    chip.register(subject, Nil, session.data)
+  }
 
   let _ = game.start(DrawCard) |> result.map(register)
   let _ = game.start(DrawCard) |> result.map(register)
@@ -35,6 +39,7 @@ pub fn can_retrieve_records_from_a_named_registry_test() {
 
 pub fn can_retrieve_subjects_from_group_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
+  let subject = registry.data
 
   let assert Ok(session_1) = game.start(DrawCard)
   let assert Ok(session_2) = game.start(DrawCard)
@@ -43,60 +48,64 @@ pub fn can_retrieve_subjects_from_group_test() {
   let assert Ok(session_5) = game.start(DrawCard)
   let assert Ok(session_6) = game.start(DrawCard)
 
-  session_1 |> chip.register(registry, RoomA, _)
-  session_2 |> chip.register(registry, RoomB, _)
-  session_3 |> chip.register(registry, RoomB, _)
-  session_4 |> chip.register(registry, RoomC, _)
-  session_5 |> chip.register(registry, RoomC, _)
-  session_6 |> chip.register(registry, RoomC, _)
+  session_1.data |> chip.register(subject, RoomA, _)
+  session_2.data |> chip.register(subject, RoomB, _)
+  session_3.data |> chip.register(subject, RoomB, _)
+  session_4.data |> chip.register(subject, RoomC, _)
+  session_5.data |> chip.register(subject, RoomC, _)
+  session_6.data |> chip.register(subject, RoomC, _)
 
-  let assert [_] = chip.members(registry, RoomA, 50)
-  let assert [_, _] = chip.members(registry, RoomB, 50)
-  let assert [_, _, _] = chip.members(registry, RoomC, 50)
+  let assert [_] = chip.members(subject, RoomA, 50)
+  let assert [_, _] = chip.members(subject, RoomB, 50)
+  let assert [_, _, _] = chip.members(subject, RoomC, 50)
 }
 
 pub fn can_retrieve_same_subject_from_different_groups_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
+  let subject = registry.data
 
   let assert Ok(session) = game.start(DrawCard)
 
-  session |> chip.register(registry, RoomA, _)
-  session |> chip.register(registry, RoomB, _)
-  session |> chip.register(registry, RoomC, _)
+  session.data |> chip.register(subject, RoomA, _)
+  session.data |> chip.register(subject, RoomB, _)
+  session.data |> chip.register(subject, RoomC, _)
 
-  let assert [session_a] = chip.members(registry, RoomA, 50)
-  let assert [session_b] = chip.members(registry, RoomB, 50)
-  let assert [session_c] = chip.members(registry, RoomC, 50)
-  should.be_true(session == session_a)
+  let assert [session_a] = chip.members(subject, RoomA, 50)
+  let assert [session_b] = chip.members(subject, RoomB, 50)
+  let assert [session_c] = chip.members(subject, RoomC, 50)
+  should.be_true(session.data == session_a)
   should.be_true(session_a == session_b && session_b == session_c)
 }
 
 pub fn can_retrieve_individual_subjects_of_same_process_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
+  let subject = registry.data
 
-  process.new_subject() |> chip.register(registry, Nil, _)
-  process.new_subject() |> chip.register(registry, Nil, _)
-  process.new_subject() |> chip.register(registry, Nil, _)
+  process.new_subject() |> chip.register(subject, Nil, _)
+  process.new_subject() |> chip.register(subject, Nil, _)
+  process.new_subject() |> chip.register(subject, Nil, _)
 
-  let assert [_, _, _] = chip.members(registry, Nil, 50)
+  let assert [_, _, _] = chip.members(subject, Nil, 50)
 }
 
 pub fn cannot_retrieve_duplicate_subjects_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
+  let subject = registry.data
 
   let self = process.new_subject()
 
-  self |> chip.register(registry, Nil, _)
-  self |> chip.register(registry, Nil, _)
-  self |> chip.register(registry, Nil, _)
+  self |> chip.register(subject, Nil, _)
+  self |> chip.register(subject, Nil, _)
+  self |> chip.register(subject, Nil, _)
 
-  let assert [_] = chip.members(registry, Nil, 50)
+  let assert [_] = chip.members(subject, Nil, 50)
 }
 
 //*---------------- dispatch tests --------------*//
 
 pub fn dispatch_is_applied_over_subjects_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
+  let subject = registry.data
 
   let assert Ok(session_1) = game.start(DrawCard)
   let assert Ok(session_2) = game.start(PlayChip)
@@ -105,27 +114,34 @@ pub fn dispatch_is_applied_over_subjects_test() {
   let assert Ok(session_5) = game.start(FireDice)
   let assert Ok(session_6) = game.start(FireDice)
 
-  session_1 |> chip.register(registry, Nil, _)
-  session_2 |> chip.register(registry, Nil, _)
-  session_3 |> chip.register(registry, Nil, _)
-  session_4 |> chip.register(registry, Nil, _)
-  session_5 |> chip.register(registry, Nil, _)
-  session_6 |> chip.register(registry, Nil, _)
+  session_1.data |> chip.register(subject, Nil, _)
+  session_2.data |> chip.register(subject, Nil, _)
+  session_3.data |> chip.register(subject, Nil, _)
+  session_4.data |> chip.register(subject, Nil, _)
+  session_5.data |> chip.register(subject, Nil, _)
+  session_6.data |> chip.register(subject, Nil, _)
 
-  chip.members(registry, Nil, 50)
+  chip.members(subject, Nil, 50)
   |> list.each(game.next)
 
   // wait for game session operation to finish
-  let assert True = until(fn() { game.current(session_1) }, is: "🪙", for: 50)
-  let assert True = until(fn() { game.current(session_2) }, is: "🎲", for: 50)
-  let assert True = until(fn() { game.current(session_3) }, is: "🎲", for: 50)
-  let assert True = until(fn() { game.current(session_4) }, is: "🂡", for: 50)
-  let assert True = until(fn() { game.current(session_5) }, is: "🂡", for: 50)
-  let assert True = until(fn() { game.current(session_6) }, is: "🂡", for: 50)
+  let assert True =
+    until(fn() { game.current(session_1.data) }, is: "🪙", for: 50)
+  let assert True =
+    until(fn() { game.current(session_2.data) }, is: "🎲", for: 50)
+  let assert True =
+    until(fn() { game.current(session_3.data) }, is: "🎲", for: 50)
+  let assert True =
+    until(fn() { game.current(session_4.data) }, is: "🂡", for: 50)
+  let assert True =
+    until(fn() { game.current(session_5.data) }, is: "🂡", for: 50)
+  let assert True =
+    until(fn() { game.current(session_6.data) }, is: "🂡", for: 50)
 }
 
 pub fn dispatch_is_applied_over_groups_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
+  let subject = registry.data
 
   let assert Ok(session_1) = game.start(DrawCard)
   let assert Ok(session_2) = game.start(DrawCard)
@@ -134,23 +150,23 @@ pub fn dispatch_is_applied_over_groups_test() {
   let assert Ok(session_5) = game.start(DrawCard)
   let assert Ok(session_6) = game.start(DrawCard)
 
-  session_1 |> chip.register(registry, RoomA, _)
-  session_2 |> chip.register(registry, RoomB, _)
-  session_3 |> chip.register(registry, RoomB, _)
-  session_4 |> chip.register(registry, RoomC, _)
-  session_5 |> chip.register(registry, RoomC, _)
-  session_6 |> chip.register(registry, RoomC, _)
+  session_1.data |> chip.register(subject, RoomA, _)
+  session_2.data |> chip.register(subject, RoomB, _)
+  session_3.data |> chip.register(subject, RoomB, _)
+  session_4.data |> chip.register(subject, RoomC, _)
+  session_5.data |> chip.register(subject, RoomC, _)
+  session_6.data |> chip.register(subject, RoomC, _)
 
-  chip.members(registry, RoomA, 50)
+  chip.members(subject, RoomA, 50)
   |> list.each(game.next)
 
-  chip.members(registry, RoomB, 50)
+  chip.members(subject, RoomB, 50)
   |> list.each(fn(subject) {
     game.next(subject)
     game.next(subject)
   })
 
-  chip.members(registry, RoomC, 50)
+  chip.members(subject, RoomC, 50)
   |> list.each(fn(subject) {
     game.next(subject)
     game.next(subject)
@@ -158,12 +174,18 @@ pub fn dispatch_is_applied_over_groups_test() {
   })
 
   // wait for game session operation to finish
-  let assert True = until(fn() { game.current(session_1) }, is: "🪙", for: 50)
-  let assert True = until(fn() { game.current(session_2) }, is: "🎲", for: 50)
-  let assert True = until(fn() { game.current(session_3) }, is: "🎲", for: 50)
-  let assert True = until(fn() { game.current(session_4) }, is: "🂡", for: 50)
-  let assert True = until(fn() { game.current(session_5) }, is: "🂡", for: 50)
-  let assert True = until(fn() { game.current(session_6) }, is: "🂡", for: 50)
+  let assert True =
+    until(fn() { game.current(session_1.data) }, is: "🪙", for: 50)
+  let assert True =
+    until(fn() { game.current(session_2.data) }, is: "🎲", for: 50)
+  let assert True =
+    until(fn() { game.current(session_3.data) }, is: "🎲", for: 50)
+  let assert True =
+    until(fn() { game.current(session_4.data) }, is: "🂡", for: 50)
+  let assert True =
+    until(fn() { game.current(session_5.data) }, is: "🂡", for: 50)
+  let assert True =
+    until(fn() { game.current(session_6.data) }, is: "🂡", for: 50)
 }
 
 //*---------------- other tests ------------------*//
@@ -172,52 +194,45 @@ pub fn subject_eventually_deregisters_after_process_dies_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
 
   let assert Ok(session) = game.start(DrawCard)
-  chip.register(registry, "my-game", session)
+  chip.register(registry.data, "my-game", session.data)
 
   // stops the game session actor
-  game.stop(session)
+  game.stop(session.data)
 
   // eventually the game session should be automatically de-registered
-  let find = fn() { chip.members(registry, "my-game", 50) }
+  let find = fn() { chip.members(registry.data, "my-game", 50) }
   let assert True = until(find, is: [], for: 50)
 }
 
 pub fn registering_works_along_supervisor_test() {
   let assert Ok(registry) = chip.start(chip.Unnamed)
+  let subject = registry.data
 
-  let assert Ok(_supervisor) =
-    supervisor.start_spec(
-      supervisor.Spec(
-        argument: 1,
-        max_frequency: 5,
-        frequency_period: 1,
-        init: fn(children) {
-          children
-          |> supervisor.add(game.childspec(registry, DrawCard))
-          |> supervisor.add(game.childspec(registry, PlayChip))
-          |> supervisor.add(game.childspec(registry, FireDice))
-        },
-      ),
-    )
+  let _supervisor =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(game.childspec(1, subject, DrawCard))
+    |> static_supervisor.add(game.childspec(2, subject, PlayChip))
+    |> static_supervisor.add(game.childspec(3, subject, FireDice))
+    |> static_supervisor.start()
 
   // assert we can retrieve individual subjects
-  let assert [session_1] = chip.members(registry, 1, 50)
+  let assert [session_1] = chip.members(subject, 1, 50)
   let assert "🂡" = game.current(session_1)
 
-  let assert [session_2] = chip.members(registry, 2, 50)
+  let assert [session_2] = chip.members(subject, 2, 50)
   let assert "🪙" = game.current(session_2)
 
-  let assert [session_3] = chip.members(registry, 3, 50)
+  let assert [session_3] = chip.members(subject, 3, 50)
   let assert "🎲" = game.current(session_3)
 
   // assert we're not able to retrieve non-registered subjects
-  let assert [] = chip.members(registry, 4, 50)
+  let assert [] = chip.members(subject, 4, 50)
 
   // assert subject is restarted by the supervisor after actor dies
   game.stop(session_2)
 
   let different_subject = fn() {
-    case chip.members(registry, 2, 50) {
+    case chip.members(subject, 2, 50) {
       [session] if session != session_2 -> True
       _other -> False
     }

@@ -1,6 +1,8 @@
 import chip
 import gleam/erlang/process
-import gleam/otp/supervisor
+import gleam/otp/actor
+import gleam/otp/static_supervisor as supervisor
+import gleam/otp/supervision
 
 pub fn main() {
   let self = process.new_subject()
@@ -17,33 +19,19 @@ pub fn main() {
 
 // ------ Supervision Tree ------ //
 
-// A context type will help carry around state between children in the supervisor.
-type Context {
-  Context(caller: process.Subject(Registry), registry: Registry, group: Group)
-}
-
 // The tree is defined by calling a hierarchy of specifications
 fn supervisor(main: process.Subject(Registry)) {
-  supervisor.start_spec(
-    supervisor.Spec(
-      argument: main,
-      max_frequency: 5,
-      frequency_period: 1,
-      init: fn(children) {
-        children
-        // First spawn the registry.
-        |> supervisor.add(registry_spec())
-        // Then spawn all sessions.
-        |> supervisor.add(session_spec())
-        |> supervisor.add(session_spec())
-        |> supervisor.add(session_spec())
-        |> supervisor.add(session_spec())
-        |> supervisor.add(session_spec())
-        // Finally notify the main process we're ready.
-        |> supervisor.add(ready())
-      },
-    ),
-  )
+  let registry = chip.start(chip.Named("sessions"))
+  let assert Ok(registry_subject) = registry
+  supervisor.new(supervisor.OneForOne)
+  |> supervisor.add(supervision.worker(fn() { registry }))
+  |> supervisor.add(session_spec(registry_subject.data, GroupA))
+  |> supervisor.add(session_spec(registry_subject.data, GroupB))
+  |> supervisor.add(session_spec(registry_subject.data, GroupC))
+  |> supervisor.add(session_spec(registry_subject.data, GroupA))
+  |> supervisor.add(session_spec(registry_subject.data, GroupB))
+  |> supervisor.add(ready(main, registry_subject.data))
+  |> supervisor.start()
 }
 
 // ------ Registry ------ //
@@ -51,38 +39,23 @@ fn supervisor(main: process.Subject(Registry)) {
 type Registry =
   chip.Registry(Message, Group)
 
-fn registry_spec() {
-  // The registry childspec first starts the registry.
-  supervisor.worker(fn(_caller: process.Subject(Registry)) {
-    chip.start(chip.Named("sessions"))
-  })
-  // After starting we transform the parameter from caller into a context for
-  // the sessions we want to register.
-  |> supervisor.returning(fn(caller, registry) {
-    Context(caller, registry, GroupA)
-  })
-}
-
 // ------ Session ------- //
 
-fn session_spec() {
-  supervisor.worker(fn(context: Context) {
-    start_session(context.registry, context.group)
-  })
-  |> supervisor.returning(fn(context: Context, _game_session) {
-    // Increments the id for the next session.
-    Context(..context, group: next_group(context.group))
-  })
+fn session_spec(registry: Registry, group: Group) {
+  supervision.worker(fn() { start_session(registry, group) })
 }
 
-fn start_session(
-  with registry: Registry,
-  group group: Group,
-) -> supervisor.StartResult(Message) {
+fn start_session(with registry: Registry, group group: Group) {
   // Mock function to startup a new session.
-  let session = process.new_subject()
-  chip.register(registry, group, session)
-  Ok(session)
+  case actor.new([]) |> actor.start() {
+    Ok(session) -> {
+      chip.register(registry, group, session.data)
+      Ok(session)
+    }
+    Error(e) -> {
+      Error(e)
+    }
+  }
 }
 
 // ------ Helpers ------ //
@@ -96,20 +69,21 @@ type Group {
   GroupC
 }
 
-fn next_group(group) {
-  case group {
-    GroupA -> GroupB
-    GroupB -> GroupC
-    GroupC -> GroupA
-  }
-}
-
-fn ready() {
+fn ready(main: process.Subject(Registry), registry: Registry) {
   // This childspec is a noop addition to the supervisor, on return it
   // will send back the registry reference.
-  supervisor.worker(fn(_context: Context) { Ok(process.new_subject()) })
-  |> supervisor.returning(fn(context: Context, _self) {
-    process.send(context.caller, context.registry)
-    Nil
+  supervision.worker(fn() {
+    actor.new_with_initialiser(10, fn(self) {
+      process.send(main, registry)
+
+      let selector =
+        process.new_selector()
+        |> process.select(self)
+
+      actor.initialised(Nil)
+      |> actor.selecting(selector)
+      |> Ok
+    })
+    |> actor.start()
   })
 }
